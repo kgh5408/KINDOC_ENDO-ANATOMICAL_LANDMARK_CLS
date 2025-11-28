@@ -299,16 +299,8 @@ class Trainer:
             betas=(0.9, 0.999)
         )
         
-        # Cosine Annealing with Warm Restarts (better than ReduceLROnPlateau)
-        scheduler_cosine = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, 
-            T_0=10,  # Initial restart period
-            T_mult=2,  # Period multiplier
-            eta_min=lr * 0.01  # Minimum learning rate
-        )
-        
-        # Also use ReduceLROnPlateau as a safety net
-        scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(
+        # Use ReduceLROnPlateau (more stable than CosineAnnealingWarmRestarts)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, 
             mode='max', 
             factor=scheduler_factor, 
@@ -325,13 +317,12 @@ class Trainer:
             'loss_function': loss_type,
             'focal_gamma': focal_gamma if loss_type == 'focal' else None,
             'max_grad_norm': max_grad_norm,
-            'scheduler': 'CosineAnnealingWarmRestarts + ReduceLROnPlateau',
+            'scheduler': 'ReduceLROnPlateau',
             'scheduler_params': {
                 'mode': 'max',
                 'factor': scheduler_factor,
                 'patience': scheduler_patience,
-                'cosine_T0': 10,
-                'cosine_T_mult': 2
+                'min_lr': lr * 0.001
             },
             'early_stopping_patience': early_stopping_patience,
             'early_stopping_monitor': 'val_f1',
@@ -373,9 +364,20 @@ class Trainer:
             self.history['val_auc'].append(val_auc)
             self.history['val_f1'].append(val_f1)
             
+            # Check for NaN values
+            if np.isnan(train_loss) or np.isnan(val_loss):
+                print(f"\n{'='*50}")
+                print(f"Training stopped due to NaN loss at epoch {epoch+1}")
+                print(f"Train Loss: {train_loss}, Val Loss: {val_loss}")
+                print(f"This usually indicates:")
+                print(f"  - Learning rate is too high")
+                print(f"  - Gradient explosion")
+                print(f"  - Numerical instability in loss computation")
+                print(f"{'='*50}\n")
+                break
+            
             # Learning rate scheduling
-            scheduler_cosine.step()  # Step every epoch
-            scheduler_plateau.step(val_f1)  # Step based on validation F1
+            scheduler.step(val_f1)  # Step based on validation F1
             current_lr = optimizer.param_groups[0]['lr']
             
             log_msg = f"Epoch {epoch+1}/{num_epochs} | " \
